@@ -23,10 +23,110 @@ Public Class KKTIX_Robot
     Dim _registrations As String = Nothing
     Dim _TicketURL As String = Nothing
     Dim _recaptchaPublicKey As String = Nothing
+    Dim _eventSlug As String = Nothing
+    Dim _orderToParam As String = Nothing
     Dim CheckTicketThread As Thread
     Dim GetTicketThread As Thread
     Dim GetThread As Thread
     Dim RegetCaptchaThread As Thread
+    Sub NewCheckTicketBackground()
+        While (1)
+            'Try
+            parameters.Clear()
+            _challenge = Nothing
+            _registrations = Nothing
+            _TicketURL = Nothing
+            _recaptchaPublicKey = Nothing
+
+            Dim response As HttpWebResponse = HttpWebResponseUtility.CreateGetHttpResponse(KKTIX_URL.Text, Nothing, Nothing, cookies)
+            Dim reader As StreamReader = New StreamReader(response.GetResponseStream, System.Text.Encoding.GetEncoding("UTF-8"))
+            Dim Line As String = reader.ReadLine
+            Dim _authenticityToken As String = Nothing
+            Dim _EventTickets As String = Nothing
+            Dim _EventFields As String = Nothing
+
+            While (Not reader.EndOfStream)
+                If Regex.Match(Line, "<title>([^<]+)", RegexOptions.IgnoreCase).Success Then
+                    'Debug.Print(Regex.Match(Line, "<title>([^<]+)", RegexOptions.IgnoreCase).Groups(1).Value)
+                ElseIf Regex.Match(Line, "<td class=""name"">([^<]+)", RegexOptions.IgnoreCase).Success Then
+                    'Debug.Print(Regex.Match(Line, "<td class=""name"">([^<]+)", RegexOptions.IgnoreCase).Groups(1).Value)
+                ElseIf Line.Contains("http://kktix.com/events/") Then
+                    If Not _registrations = Nothing Then
+                        Exit While
+                    End If
+                    _registrations = Regex.Match(Line, "<a href=""([^""]+)", RegexOptions.IgnoreCase).Groups(1).Value
+                    _eventSlug = Regex.Match(_registrations, "/events\/(.*?)\/", RegexOptions.IgnoreCase).Groups(1).Value
+                    'Debug.Print(_registrations)
+                End If
+                Line = reader.ReadLine
+            End While
+            'Try
+            '    response.Close()
+            'Catch ex As Exception
+
+            'End Try
+
+            'Debug.Print(Regex.Match("https://kktix.com/events/taiwanphoto2014/registrations/588524-21e4c86f77a0de476b0b7b771b8cb551#/", "/registrations\/(.*)/", RegexOptions.IgnoreCase).Groups(1).Value)
+
+
+            If _registrations = Nothing Then
+                ToolStripStatusLabel.Text = "尚未開放購買"
+                ToolStripStatusLabel.ForeColor = Color.DarkOrange
+                Continue While
+            End If
+
+            'Registrations
+            If Not _registrations = Nothing Then
+                response = HttpWebResponseUtility.CreateGetHttpResponse("https://kktix.com/g/events/" & _eventSlug & "/base_info", Nothing, Nothing, cookies)
+                reader = New StreamReader(response.GetResponseStream, System.Text.Encoding.GetEncoding("UTF-8"))
+
+                Dim jsonDocx As Newtonsoft.Json.Linq.JObject = Newtonsoft.Json.JsonConvert.DeserializeObject(reader.ReadToEnd)
+                Dim _ticketId As String = Nothing
+                Dim _unitToBuy As Integer = 0
+                Dim _maxToBuy As Integer = 0
+                Dim _startAt As Date = Now
+                Dim _currency As String = Nothing
+                For i = 0 To jsonDocx.Item("eventData")("tickets").Count - 1
+                    If Replace(TicketComboBox.Items(TicketComboBox.SelectedIndex), " ", "") = jsonDocx.Item("eventData")("tickets")(i)("name") Then
+                        _ticketId = jsonDocx.Item("eventData")("tickets")(i)("id")
+                        _unitToBuy = jsonDocx.Item("eventData")("tickets")(i)("unit_to_buy")
+                        _maxToBuy = jsonDocx.Item("eventData")("tickets")(i)("max_to_buy")
+                        _startAt = CDate(jsonDocx.Item("eventData")("tickets")(i)("start_at"))
+                        _currency = jsonDocx.Item("eventData")("tickets")(i)("currencies")
+                    End If
+                Next
+
+                response.Close()
+                Try
+                    parameters.Clear()
+                    parameters.Add("json", "{""tickets"":[{""id"":" & _ticketId & ",""quantity"":" & _unitToBuy & ",""invitationCodes"":[]}],""currency"":""TWD"",""recaptcha"":{},""agreeTerm"":true}")
+                    response = HttpWebResponseUtility.CreatePostHttpResponse("https://kktix.com/g/events/" & _eventSlug & "/registrations", parameters, Nothing, Nothing, Encoding.UTF8, cookies)
+                    reader = New StreamReader(New GZipStream(response.GetResponseStream, CompressionMode.Decompress), Encoding.[Default])
+                    jsonDocx = Newtonsoft.Json.JsonConvert.DeserializeObject(reader.ReadToEnd)
+                    _TicketURL = "https://kktix.com/events/" & _eventSlug & "/registrations/" & jsonDocx.Item("to_param").ToString & "#/"
+                    response.Close()
+
+                    response = HttpWebResponseUtility.CreateGetHttpResponse("https://kktix.com/g/events/" & _eventSlug & "/base_info?order_id=" & jsonDocx.Item("to_param").ToString, Nothing, Nothing, cookies)
+                    reader = New StreamReader(response.GetResponseStream, System.Text.Encoding.GetEncoding("UTF-8"))
+                    jsonDocx = Newtonsoft.Json.JsonConvert.DeserializeObject(reader.ReadToEnd)
+                    'Debug.Print(jsonDocx.Item("order")("expires_at"))
+                    response.Close()
+                    GetSingleTicketBackground(jsonDocx.Item("order")("expires_at"))
+                    Exit While
+                Catch ex As Exception
+                    ToolStripStatusLabel.Text = "結束販售"
+                End Try
+
+                '單票種無驗證碼
+                'If response.ResponseUri.AbsoluteUri Like Replace(Replace(_registrations, "new", ""), "http", "https") & "*" And Not response.ResponseUri.AbsoluteUri.Contains("/registrations/new") Then
+                '    _TicketURL = response.ResponseUri.AbsoluteUri
+                '    response.Close()
+                '    GetSingleTicketBackground()
+                '    Exit While
+                'End If
+            End If
+        End While
+    End Sub
     Sub CheckTicketBackground()
         While (1)
             Try
@@ -239,6 +339,13 @@ Public Class KKTIX_Robot
 
         End Try
     End Sub
+    Sub GetSingleTicketBackground(expires_at As String)
+        Dim exp As Date = CDate(expires_at).AddHours(8)
+        ToolStripStatusLabel.ForeColor = Color.DodgerBlue
+        ToolStripStatusLabel.Text = "票劵保留至" & exp.ToString("yyyy/MM/dd HH:mm:ss")
+        CheckBox.Enabled = False
+        MessageBox.Show(Me, "成功搶到票劵，請點擊下方工具列複製票劵網址！", "KKTIX Robot")
+    End Sub
     Sub GetTicketBackground()
         Try
             reCaptchaTextBox.Enabled = False
@@ -347,7 +454,7 @@ Public Class KKTIX_Robot
         If CheckBox.Checked = True Then
             KKTIX_URL.Enabled = False
             GetButton.Enabled = False
-            CheckTicketThread = New Thread(AddressOf Me.CheckTicketBackground)
+            CheckTicketThread = New Thread(AddressOf Me.NewCheckTicketBackground)
             CheckTicketThread.Start()
             TicketComboBox.Enabled = False
             ToolStripStatusLabel.Text = "尋找票劵中 ..."
@@ -429,13 +536,13 @@ Public Class KKTIX_Robot
         End If
     End Sub
 
-    Private Sub ToolStripStatusLabel_TextChanged(sender As Object, e As EventArgs) Handles ToolStripStatusLabel.TextChanged
-        If Not _TicketURL = Nothing Then
-            Clipboard.Clear()
-            Clipboard.SetText(_TicketURL)
-            MsgBox("票劵已複製至剪貼簿 !", MsgBoxStyle.Information)
-        End If
-    End Sub
+    'Private Sub ToolStripStatusLabel_TextChanged(sender As Object, e As EventArgs) Handles ToolStripStatusLabel.TextChanged
+    '    If Not _TicketURL = Nothing Then
+    '        Clipboard.Clear()
+    '        Clipboard.SetText(_TicketURL)
+    '        MsgBox("票劵已複製至剪貼簿 !", MsgBoxStyle.Information)
+    '    End If
+    'End Sub
 
     Private Sub reCAPTCHA_Click(sender As Object, e As EventArgs) Handles reCAPTCHA.Click
         If Not reCaptchaTextBox.Text = "" And SendButton.Enabled = False Then
@@ -537,11 +644,20 @@ Namespace SilentWebModule
             Else
                 request = TryCast(WebRequest.Create(url), HttpWebRequest)
             End If
+
+            If url.Contains("https://kktix.com/g/events/") And url.Contains("/registrations") Then
+                request.ContentType = "application/json;charset=utf-8"
+                request.Accept = "application/json, text/plain, */*"
+                request.Headers.Add("Accept-Encoding", "gzip, deflate")
+                request.Headers.Add("Accept-Language", "zh-tw,en-us;q=0.7,en;q=0.3")
+                request.Referer = "https://kktix.com/events/" & Regex.Match(url, "/events\/(.*?)\/", RegexOptions.IgnoreCase).Groups(1).Value & "/registrations/new"
+            Else
+                request.ContentType = "application/x-www-form-urlencoded"
+                request.Accept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                request.Headers.Add("Accept-Language", "zh-TW,zh;q=0.8,en-US;q=0.6,en;q=0.4")
+            End If
             request.Method = "POST"
             request.KeepAlive = True
-            request.ContentType = "application/x-www-form-urlencoded"
-            request.Accept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-            request.Headers.Add("Accept-Language", "zh-TW,zh;q=0.8,en-US;q=0.6,en;q=0.4")
             request.AllowAutoRedirect = True
             'request.Accept = "text/html, application/xhtml+xml, */*;" & "zh-Hant-TW,zh-Hant;q=0.5"
             If Not String.IsNullOrEmpty(userAgent) Then
@@ -561,16 +677,28 @@ Namespace SilentWebModule
             '如果需要POST數據
             If Not (parameters Is Nothing OrElse parameters.Count = 0) Then
                 Dim buffer As New StringBuilder()
+                Dim postData As String = Nothing
+                Dim jsonCheck As Boolean = False
                 Dim i As Integer = 0
                 For Each key As String In parameters.Keys
-                    If i > 0 Then
-                        buffer.AppendFormat("&{0}={1}", key, parameters(key))
+                    If key = "json" Then
+                        postData = parameters(key) 'JsonConvert.SerializeObject(parameters(key)).ToString()
+                        jsonCheck = True
                     Else
-                        buffer.AppendFormat("{0}={1}", key, parameters(key))
+                        If i > 0 Then
+                            buffer.AppendFormat("&{0}={1}", key, parameters(key))
+                        Else
+                            buffer.AppendFormat("{0}={1}", key, parameters(key))
+                        End If
+                        i += 1
                     End If
-                    i += 1
                 Next
-                Dim data As Byte() = requestEncoding.GetBytes(buffer.ToString())
+                Dim data As Byte()
+                If jsonCheck Then
+                    data = Encoding.UTF8.GetBytes(postData)
+                Else
+                    data = requestEncoding.GetBytes(buffer.ToString())
+                End If
                 request.ContentLength = data.Length
                 Using stream As Stream = request.GetRequestStream()
                     stream.Write(data, 0, data.Length)

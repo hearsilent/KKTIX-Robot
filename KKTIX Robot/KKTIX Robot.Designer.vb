@@ -161,6 +161,7 @@ Partial Class KKTIX_Robot
         Me.Controls.Add(Me.SendButton)
         Me.Controls.Add(Me.reCAPTCHA)
         Me.Font = New System.Drawing.Font("微軟正黑體", 9.0!, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, CType(136, Byte))
+        Me.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedSingle
         Me.Icon = CType(resources.GetObject("$this.Icon"), System.Drawing.Icon)
         Me.Margin = New System.Windows.Forms.Padding(3, 4, 3, 4)
         Me.Name = "KKTIX_Robot"
